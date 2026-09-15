@@ -25,11 +25,13 @@ class Hover(IsaacEnv):
         self.enable_flow = self.disturbances[self.mode]['flow']['enable_flow']
         self.max_flow_velocity = self.disturbances[self.mode]['flow']['max_flow_velocity']
         self.flow_velocity_gaussian_noise = self.disturbances[self.mode]['flow']['flow_velocity_gaussian_noise']
+        self.curriculum_cfg = cfg.task.get("curriculum", {})
         # IsaacEnv.__init__() calls _set_specs(), so this must be available
         # before entering the base-class initializer.
         self.control_mode = cfg.task.get("control_mode", "direct")
 
         super().__init__(cfg, headless)
+        self.episode_count = torch.zeros(self.num_envs, device=self.device)
 
         self.drone.initialize()
         if self.control_mode == "s_surface":
@@ -203,7 +205,22 @@ class Hover(IsaacEnv):
             self.drone.set_flow_velocities(env_ids, self.max_flow_velocity, self.flow_velocity_gaussian_noise)
         self.drone._reset_idx(env_ids, self.training)
 
-        pos = self.init_pos_dist.sample((*env_ids.shape, 1))
+        curriculum_enabled = bool(self.curriculum_cfg.get("enable", False))
+        if curriculum_enabled:
+            warmup = max(float(self.curriculum_cfg.get("warmup_episodes", 200)), 1.0)
+            alpha = (self.episode_count[env_ids] / warmup).clamp(0.0, 1.0)
+            xy_start = float(self.curriculum_cfg.get("start_xy_radius", 0.5))
+            xy_end = float(self.curriculum_cfg.get("end_xy_radius", 2.5))
+            z_start = float(self.curriculum_cfg.get("start_z_half_range", 0.25))
+            z_end = float(self.curriculum_cfg.get("end_z_half_range", 0.5))
+            xy_radius = xy_start + (xy_end - xy_start) * alpha
+            z_half_range = z_start + (z_end - z_start) * alpha
+            offset = torch.empty((len(env_ids), 1, 3), device=self.device)
+            offset[..., :2] = (torch.rand((len(env_ids), 1, 2), device=self.device) * 2.0 - 1.0) * xy_radius[:, None, None]
+            offset[..., 2] = (torch.rand((len(env_ids), 1), device=self.device) * 2.0 - 1.0) * z_half_range[:, None]
+            pos = self.target_pos[:, None, :] + offset
+        else:
+            pos = self.init_pos_dist.sample((*env_ids.shape, 1))
         rpy = self.init_rpy_dist.sample((*env_ids.shape, 1))
         rot = euler_to_quaternion(rpy)
         self.drone.set_world_poses(
@@ -232,6 +249,7 @@ class Hover(IsaacEnv):
         self.target_vis.set_world_poses(orientations=target_rot, env_indices=env_ids)
 
         self.stats[env_ids] = 0.
+        self.episode_count[env_ids] += 1
 
     def _pre_sim_step(self, tensordict: TensorDictBase):
         actions = tensordict[("agents", "action")]

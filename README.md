@@ -134,6 +134,11 @@ The first checks finite, sign-sensitive rotor commands. The second runs a
 controlled simulator probe and prints measured world-frame displacement; a
 real vehicle/asset geometry check is still required before tuning gains.
 
+The default direct-control Hover task now uses a small initial-position
+curriculum: episodes start within roughly 0.5 m of the target and expand to
+the original 2.5 m range over 200 episodes. Set `curriculum.enable: false` in
+`cfg/task/Hover.yaml` to restore the original random initialization.
+
 
 To start the training process, run:
 

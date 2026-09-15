@@ -12,6 +12,14 @@ env:
   env_spacing: 6
   max_episode_length: 200
 
+curriculum:
+  enable: true
+  start_xy_radius: 0.5
+  end_xy_radius: 2.5
+  start_z_half_range: 0.25
+  end_z_half_range: 0.5
+  warmup_episodes: 200
+
 drone_model:
   name: BlueROV
   controller: null
