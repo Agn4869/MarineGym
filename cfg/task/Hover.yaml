@@ -14,9 +14,11 @@ env:
 
 curriculum:
   enable: true
-  start_xy_radius: 0.5
+  # Start large enough to exercise horizontal control while retaining a
+  # gentle curriculum toward the full 2.5 m operating range.
+  start_xy_radius: 1.0
   end_xy_radius: 2.5
-  start_z_half_range: 0.25
+  start_z_half_range: 0.35
   end_z_half_range: 0.5
   warmup_episodes: 200
 

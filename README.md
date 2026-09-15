@@ -141,7 +141,7 @@ comparison, but it is not used by the default Hover path. To recover the old
 six-dimensional direct PPO baseline, override `task.control_mode=direct`.
 
 The Hover task uses a small initial-position curriculum: episodes start within
-roughly 0.5 m of the target and expand to the original 2.5 m range over 200
+roughly 1.0 m of the target and expand to the original 2.5 m range over 200
 episodes. Set `curriculum.enable: false` in `cfg/task/Hover.yaml` to restore
 the original random initialization.
 

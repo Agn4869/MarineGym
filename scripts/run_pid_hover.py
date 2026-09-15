@@ -34,12 +34,20 @@ def main() -> None:
     parser.add_argument("--num-envs", type=int, default=1)
     parser.add_argument("--steps", type=int, default=500)
     parser.add_argument("--output", default="pid_hover_trajectory.csv")
+    parser.add_argument(
+        "--flow",
+        action=argparse.BooleanOptionalAction,
+        default=False,
+        help="Enable the configured random current disturbance for the run.",
+    )
     args = parser.parse_args()
     if args.num_envs < 1 or args.steps < 1:
         parser.error("--num-envs and --steps must be positive")
 
     cfg = load_task_config("Hover", args.num_envs, args.headless)
     cfg.task.control_mode = "pid"
+    if args.flow:
+        cfg.task.disturbances.train.flow.enable_flow = True
     cfg.task.env.max_episode_length = max(int(cfg.task.env.max_episode_length), args.steps + 1)
     simulation_app = init_simulation_app(cfg)
     env = None
