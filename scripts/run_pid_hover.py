@@ -35,6 +35,13 @@ def main() -> None:
     parser.add_argument("--steps", type=int, default=500)
     parser.add_argument("--output", default="pid_hover_trajectory.csv")
     parser.add_argument(
+        "--initial-position",
+        nargs=3,
+        type=float,
+        metavar=("X", "Y", "Z"),
+        help="Use a fixed local initial position instead of reset randomization.",
+    )
+    parser.add_argument(
         "--flow",
         action=argparse.BooleanOptionalAction,
         default=False,
@@ -57,6 +64,24 @@ def main() -> None:
 
         env = IsaacEnv.REGISTRY["Hover"](cfg, headless=args.headless)
         td = env.reset()
+        if args.initial_position is not None:
+            position = torch.tensor(
+                [[args.initial_position]], dtype=torch.float32, device=env.device
+            )
+            orientation = torch.tensor(
+                [[[1.0, 0.0, 0.0, 0.0]]], dtype=torch.float32, device=env.device
+            )
+            env.drone.set_world_poses(
+                position + env.envs_positions[0].reshape(1, 1, 3),
+                orientation,
+                torch.tensor([0], device=env.device),
+            )
+            env.drone.set_velocities(
+                torch.zeros_like(env.drone.get_velocities()),
+                torch.tensor([0], device=env.device),
+            )
+            # Rebuild the first observation after overriding the reset pose.
+            td.update(env._compute_state_and_obs())
         action = torch.zeros((args.num_envs, 1, 4), device=env.device)
         for step in range(args.steps):
             td.set(("agents", "action"), action)
