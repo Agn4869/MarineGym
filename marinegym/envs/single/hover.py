@@ -33,6 +33,10 @@ class Hover(IsaacEnv):
         )
         self.action_smoothing = float(cfg.task.get("action_smoothing", 1.0))
         self.action_smoothing = max(0.0, min(1.0, self.action_smoothing))
+        integral_cfg = cfg.task.get("position_error_integral", {})
+        self.position_integral_enable = bool(integral_cfg.get("enable", False))
+        self.position_integral_decay = float(integral_cfg.get("decay", 0.995))
+        self.position_integral_limit = max(float(integral_cfg.get("limit", 1.0)), 1e-3)
         self.time_encoding = cfg.task.time_encoding
         self.mode = cfg.mode
         self.disturbances = cfg.task.get("disturbances", {})
@@ -55,6 +59,10 @@ class Hover(IsaacEnv):
         self.prev_actions = torch.zeros(
             self.num_envs, 1, self.drone.num_rotors, device=self.device
         )
+        if self.position_integral_enable:
+            self.position_error_integral = torch.zeros(
+                self.num_envs, 1, 3, device=self.device
+            )
         if self.control_mode == "s_surface":
             from marinegym.controllers import ControllerBase
             controller_name = cfg.task.drone_model.controller
@@ -172,6 +180,8 @@ class Hover(IsaacEnv):
     def _set_specs(self):
         drone_state_dim = self.drone.state_spec.shape[-1]
         observation_dim = drone_state_dim + 3
+        if self.position_integral_enable:
+            observation_dim += 3
 
         if self.cfg.task.time_encoding:
             self.time_encoding_dim = 4
@@ -270,6 +280,8 @@ class Hover(IsaacEnv):
         self.target_vis.set_world_poses(orientations=target_rot, env_indices=env_ids)
 
         self.prev_actions[env_ids] = 0.0
+        if self.position_integral_enable:
+            self.position_error_integral[env_ids] = 0.0
 
         self.stats[env_ids] = 0.
         self.episode_count[env_ids] += 1
@@ -313,6 +325,14 @@ class Hover(IsaacEnv):
         self.rheading = self.target_heading - self.drone_state[..., 13:16]
 
         obs = [self.rpos, self.drone_state[..., 3:], self.rheading,]
+        if self.position_integral_enable:
+            self.position_error_integral.mul_(self.position_integral_decay).add_(
+                self.rpos * self.dt
+            )
+            self.position_error_integral.clamp_(
+                -self.position_integral_limit, self.position_integral_limit
+            )
+            obs.append(self.position_error_integral / self.position_integral_limit)
         if self.time_encoding:
             t = (self.progress_buf / self.max_episode_length).unsqueeze(-1)
             obs.append(t.expand(-1, self.time_encoding_dim).unsqueeze(1))

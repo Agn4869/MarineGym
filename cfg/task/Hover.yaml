@@ -43,4 +43,12 @@ success_velocity_threshold: 0.2
 # values reduce visible thruster chatter while keeping direct actuation.
 action_smoothing: 0.2
 
+# Integral of the target-relative position error, exposed to PPO as three
+# additional observations.  This gives direct control a memory for removing
+# steady-state bias without adding a hand-written PID action mixer.
+position_error_integral:
+  enable: true
+  decay: 0.995
+  limit: 1.0
+
 action_transform: null
