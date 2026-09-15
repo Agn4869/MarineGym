@@ -23,6 +23,14 @@ class Hover(IsaacEnv):
         self.reward_heading_weight = float(cfg.task.get("reward_heading_weight", 0.2))
         self.reward_near_target_weight = float(cfg.task.get("reward_near_target_weight", 0.0))
         self.near_target_radius = float(cfg.task.get("near_target_radius", 0.2))
+        self.reward_position_precision_weight = float(
+            cfg.task.get("reward_position_precision_weight", 0.0)
+        )
+        self.reward_success_weight = float(cfg.task.get("reward_success_weight", 0.0))
+        self.success_position_radius = float(cfg.task.get("success_position_radius", 0.15))
+        self.success_velocity_threshold = float(
+            cfg.task.get("success_velocity_threshold", 0.2)
+        )
         self.action_smoothing = float(cfg.task.get("action_smoothing", 1.0))
         self.action_smoothing = max(0.0, min(1.0, self.action_smoothing))
         self.time_encoding = cfg.task.time_encoding
@@ -340,8 +348,16 @@ class Hover(IsaacEnv):
         reward_near_target = self.reward_near_target_weight * torch.exp(
             -torch.square(pos_error / max(self.near_target_radius, 1e-3))
         )
+        # Apply an additional bounded precision penalty only near the target.
+        # Clamping at 0.5 m keeps this term from dominating the coarse reaching
+        # objective while giving PPO a useful gradient for the final correction.
+        precision_error = torch.clamp(pos_error, max=0.5)
+        reward_position_precision = -self.reward_position_precision_weight * torch.square(
+            precision_error
+        )
         # uprightness
-        reward_up = torch.square((self.drone.up[..., 2] + 1) / 2)
+        uprightness = torch.square((self.drone.up[..., 2] + 1) / 2)
+        reward_up = uprightness
 
         # spin reward
         spinnage = torch.square(self.drone.vel[..., -1])
@@ -352,6 +368,12 @@ class Hover(IsaacEnv):
         reward_action_smoothness = self.reward_action_smoothness_weight * torch.exp(-self.drone.throttle_difference)
         linear_speed = torch.norm(self.drone.vel[..., :3], dim=-1)
         reward_velocity = -self.reward_velocity_weight * torch.tanh(linear_speed)
+        success = (
+            (pos_error < self.success_position_radius)
+            & (linear_speed < self.success_velocity_threshold)
+            & (uprightness > 0.98)
+        )
+        reward_success = self.reward_success_weight * success.to(pos_error.dtype)
 
         assert reward_pose.shape == reward_up.shape == reward_spin.shape
         reward = (
@@ -361,6 +383,8 @@ class Hover(IsaacEnv):
             + reward_action_smoothness
             + reward_velocity
             + reward_near_target
+            + reward_position_precision
+            + reward_success
         )
 
         distance = torch.norm(torch.cat([self.rpos, self.rheading], dim=-1), dim=-1)

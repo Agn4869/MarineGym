@@ -33,7 +33,11 @@ reward_distance_scale: 1.2
 reward_position_weight: 0.8
 reward_heading_weight: 0.2
 reward_near_target_weight: 0.15
-near_target_radius: 0.2
+near_target_radius: 0.35
+reward_position_precision_weight: 0.3
+reward_success_weight: 0.2
+success_position_radius: 0.15
+success_velocity_threshold: 0.2
 
 # Fraction of the new PPO action applied at each simulation step.  Lower
 # values reduce visible thruster chatter while keeping direct actuation.
