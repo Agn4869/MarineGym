@@ -27,7 +27,12 @@ force_sensor: false
 time_encoding: true
 
 reward_effort_weight: 0.1
-reward_action_smoothness_weight: 0.0
+reward_action_smoothness_weight: 0.02
+reward_velocity_weight: 0.1
 reward_distance_scale: 1.2
+
+# Fraction of the new PPO action applied at each simulation step.  Lower
+# values reduce visible thruster chatter while keeping direct actuation.
+action_smoothing: 0.2
 
 action_transform: null

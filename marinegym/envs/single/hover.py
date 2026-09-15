@@ -17,7 +17,10 @@ class Hover(IsaacEnv):
     def __init__(self, cfg, headless):
         self.reward_effort_weight = cfg.task.reward_effort_weight
         self.reward_action_smoothness_weight = cfg.task.reward_action_smoothness_weight
+        self.reward_velocity_weight = cfg.task.get("reward_velocity_weight", 0.0)
         self.reward_distance_scale = cfg.task.reward_distance_scale
+        self.action_smoothing = float(cfg.task.get("action_smoothing", 1.0))
+        self.action_smoothing = max(0.0, min(1.0, self.action_smoothing))
         self.time_encoding = cfg.task.time_encoding
         self.mode = cfg.mode
         self.disturbances = cfg.task.get("disturbances", {})
@@ -34,6 +37,12 @@ class Hover(IsaacEnv):
         self.episode_count = torch.zeros(self.num_envs, device=self.device)
 
         self.drone.initialize()
+        # Keep a filtered action per environment.  This is intentionally part
+        # of the environment dynamics rather than a policy-only postprocess,
+        # so training and deterministic replay see the same actuator behavior.
+        self.prev_actions = torch.zeros(
+            self.num_envs, 1, self.drone.num_rotors, device=self.device
+        )
         if self.control_mode == "s_surface":
             from marinegym.controllers import ControllerBase
             controller_name = cfg.task.drone_model.controller
@@ -248,11 +257,21 @@ class Hover(IsaacEnv):
         self.target_heading[env_ids] = quat_axis(target_rot.squeeze(1), 0).unsqueeze(1)
         self.target_vis.set_world_poses(orientations=target_rot, env_indices=env_ids)
 
+        self.prev_actions[env_ids] = 0.0
+
         self.stats[env_ids] = 0.
         self.episode_count[env_ids] += 1
 
     def _pre_sim_step(self, tensordict: TensorDictBase):
         actions = tensordict[("agents", "action")]
+        if self.action_smoothing < 1.0:
+            # ``action_smoothing`` is the fraction of the new command applied
+            # this step; the remainder comes from the previous filtered cmd.
+            actions = (
+                (1.0 - self.action_smoothing) * self.prev_actions
+                + self.action_smoothing * actions
+            )
+            self.prev_actions.copy_(actions)
         if self.control_mode == "s_surface":
             root_state = self.drone.get_state()[..., :13]
             # Agent actions are commonly stored as ``(num_envs, 4)`` while
@@ -316,6 +335,8 @@ class Hover(IsaacEnv):
         # effort
         reward_effort = self.reward_effort_weight * torch.exp(-self.effort)
         reward_action_smoothness = self.reward_action_smoothness_weight * torch.exp(-self.drone.throttle_difference)
+        linear_speed = torch.norm(self.drone.vel[..., :3], dim=-1)
+        reward_velocity = -self.reward_velocity_weight * torch.tanh(linear_speed)
 
         assert reward_pose.shape == reward_up.shape == reward_spin.shape
         reward = (
@@ -323,6 +344,7 @@ class Hover(IsaacEnv):
             + reward_pose * (reward_up + reward_spin)
             + reward_effort
             + reward_action_smoothness
+            + reward_velocity
         )
 
         misbehave = (self.drone.pos[..., 2] < 0.2) | (distance > 4)
