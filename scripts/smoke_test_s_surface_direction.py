@@ -58,6 +58,7 @@ def main() -> None:
                 td = env.step(td)
             if label == "+x":
                 print(f"[ACTION_TEST] throttle={env.drone.throttle[0, 0].detach().cpu().tolist()}", flush=True)
+                print(f"[ACTION_TEST] thrusts={env.drone.thrusts[0, 0].detach().cpu().tolist()}", flush=True)
             state = env.drone.get_state()
             delta = (state[..., :3] - p0)[..., 0, :].squeeze(0)
             # get_state layout is position(3), quaternion(4), linear velocity(3).
