@@ -23,6 +23,18 @@ curriculum:
 drone_model:
   name: BlueROV
   controller: null
+# Start with a model-free-independent low-level controller.  Override with
+# ``task.control_mode=direct`` to recover six-dimensional direct PPO actions.
+control_mode: pid
+
+pid:
+  position_gain: [1.2, 1.2, 1.8]
+  integral_gain: [0.08, 0.08, 0.12]
+  velocity_gain: [1.8, 1.8, 2.2]
+  attitude_gain: [0.8, 0.8, 0.5]
+  angular_rate_gain: [0.15, 0.15, 0.12]
+  integral_limit: 1.0
+  water_density: 997.0
 force_sensor: false
 time_encoding: true
 
@@ -39,19 +51,18 @@ reward_success_weight: 0.2
 success_position_radius: 0.15
 success_velocity_threshold: 0.2
 
-# Fraction of the new PPO action applied at each simulation step.  Lower
-# values reduce visible thruster chatter while keeping direct actuation.
+# Fraction of the new command applied at each simulation step.  Lower values
+# reduce command chatter for either direct or high-level control.
 action_smoothing: 0.2
 
-# Integral of the target-relative position error, exposed to PPO as three
-# additional observations.  This gives direct control a memory for removing
-# steady-state bias without adding a hand-written PID action mixer.
+# Integral of the target-relative position error, exposed as three additional
+# observations.  PID also keeps its own integral state for low-level control.
 position_error_integral:
   enable: true
   decay: 0.995
   limit: 1.0
 
-# Expose the previous filtered direct-control command to PPO.
+# Expose the previous filtered command to PPO.
 include_previous_action: true
 
 action_transform: null

@@ -13,6 +13,8 @@ import sys
 import traceback
 from pathlib import Path
 
+import torch
+
 REPO_ROOT = Path(__file__).resolve().parents[1]
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
@@ -97,7 +99,15 @@ def main() -> None:
         )
 
         for step in range(args.steps):
-            tensordict = env.rand_step(tensordict)
+            if cfg.task.get("control_mode", "direct") == "pid":
+                # PID mode expects high-level references, not six direct
+                # thruster values.  Zero references exercise fixed-target
+                # stabilization without injecting a random commanded velocity.
+                action = torch.zeros((args.num_envs, 1, 4), device=env.device)
+                tensordict.set(("agents", "action"), action)
+                tensordict = env.step(tensordict)
+            else:
+                tensordict = env.rand_step(tensordict)
             if step == 0 or step + 1 == args.steps:
                 print(
                     f"[INFO] Completed random step {step + 1}/{args.steps}.",

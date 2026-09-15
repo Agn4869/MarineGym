@@ -57,17 +57,20 @@ class Hover(IsaacEnv):
         # Keep a filtered action per environment.  This is intentionally part
         # of the environment dynamics rather than a policy-only postprocess,
         # so training and deterministic replay see the same actuator behavior.
-        self.prev_actions = torch.zeros(
-            self.num_envs, 1, self.drone.num_rotors, device=self.device
-        )
+        action_dim = self.drone.num_rotors if self.control_mode == "direct" else 4
+        self.prev_actions = torch.zeros(self.num_envs, 1, action_dim, device=self.device)
         if self.position_integral_enable:
             self.position_error_integral = torch.zeros(
                 self.num_envs, 1, 3, device=self.device
             )
-        if self.control_mode == "s_surface":
+        if self.control_mode in ("s_surface", "pid"):
             from marinegym.controllers import ControllerBase
             controller_name = cfg.task.drone_model.controller
-            controller_cls = ControllerBase.REGISTRY[controller_name]
+            if self.control_mode == "pid":
+                from marinegym.controllers import PIDController
+                controller_cls = PIDController
+            else:
+                controller_cls = ControllerBase.REGISTRY[controller_name]
             # The articulation backend may expose the diagonal inertia as
             # either ``(3,)`` or a singleton-batched tensor.  Normalize it
             # here before converting values for the controller configuration.
@@ -78,14 +81,29 @@ class Hover(IsaacEnv):
                 "inertia": {"xx": float(inertia[0]), "yy": float(inertia[1]), "zz": float(inertia[2])},
                 "rotor_configuration": self.drone.params["rotor_configuration"],
             }
-            surface_cfg = cfg.task.get("s_surface", {})
-            self.controller = controller_cls(
-                9.81,
-                uav_params,
-                surface_lambda=float(surface_cfg.get("surface_lambda", 1.5)),
-                reaching_gain=float(surface_cfg.get("reaching_gain", 2.0)),
-                boundary_layer=float(surface_cfg.get("boundary_layer", 0.15)),
-            ).to(self.device)
+            if self.control_mode == "pid":
+                pid_cfg = cfg.task.get("pid", {})
+                self.controller = controller_cls(
+                    9.81,
+                    {**uav_params, "volume": float(self.drone.params.get("volume", 0.0)), "coBM": float(self.drone.params.get("coBM", 0.0))},
+                    dt=float(self.dt),
+                    position_gain=pid_cfg.get("position_gain", (1.2, 1.2, 1.8)),
+                    integral_gain=pid_cfg.get("integral_gain", (0.08, 0.08, 0.12)),
+                    velocity_gain=pid_cfg.get("velocity_gain", (1.8, 1.8, 2.2)),
+                    attitude_gain=pid_cfg.get("attitude_gain", (0.8, 0.8, 0.5)),
+                    angular_rate_gain=pid_cfg.get("angular_rate_gain", (0.15, 0.15, 0.12)),
+                    integral_limit=float(pid_cfg.get("integral_limit", 1.0)),
+                    water_density=float(pid_cfg.get("water_density", 997.0)),
+                ).to(self.device)
+            else:
+                surface_cfg = cfg.task.get("s_surface", {})
+                self.controller = controller_cls(
+                    9.81,
+                    uav_params,
+                    surface_lambda=float(surface_cfg.get("surface_lambda", 1.5)),
+                    reaching_gain=float(surface_cfg.get("reaching_gain", 2.0)),
+                    boundary_layer=float(surface_cfg.get("boundary_layer", 0.15)),
+                ).to(self.device)
             # Read the actual BlueROV thruster poses from USD.  The first four
             # thrusters are horizontal and the last two are vertical; using a
             # synthetic quadrotor mixer here would silently flip/lose axes.
@@ -184,7 +202,7 @@ class Hover(IsaacEnv):
         if self.position_integral_enable:
             observation_dim += 3
         if self.include_previous_action:
-            observation_dim += self.drone.num_rotors
+            observation_dim += self.drone.num_rotors if self.control_mode == "direct" else 4
 
         if self.cfg.task.time_encoding:
             self.time_encoding_dim = 4
@@ -201,7 +219,7 @@ class Hover(IsaacEnv):
             # action spec (``(num_envs, 1, action_dim)``), which PPO uses to
             # infer ``n_agents`` and ``action_dim``.
             BoundedTensorSpec(-1, 1, (1, 4), device=self.device)
-            if self.control_mode == "s_surface"
+            if self.control_mode in ("s_surface", "pid")
             else self.drone.action_spec.unsqueeze(0)
         )
         self.action_spec = CompositeSpec({
@@ -238,6 +256,8 @@ class Hover(IsaacEnv):
         if self.enable_flow:
             self.drone.set_flow_velocities(env_ids, self.max_flow_velocity, self.flow_velocity_gaussian_noise)
         self.drone._reset_idx(env_ids, self.training)
+        if self.controller is not None and hasattr(self.controller, "reset"):
+            self.controller.reset(env_ids)
 
         curriculum_enabled = bool(self.curriculum_cfg.get("enable", False))
         if curriculum_enabled:
@@ -299,7 +319,7 @@ class Hover(IsaacEnv):
                 + self.action_smoothing * actions
             )
             self.prev_actions.copy_(actions)
-        if self.control_mode == "s_surface":
+        if self.control_mode in ("s_surface", "pid"):
             root_state = self.drone.get_state()[..., :13]
             # Agent actions are commonly stored as ``(num_envs, 4)`` while
             # the articulation state carries an extra singleton agent axis

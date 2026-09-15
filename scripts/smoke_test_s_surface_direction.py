@@ -1,4 +1,4 @@
-"""Check the world-frame sign of S-surface velocity references.
+"""Check the world-frame sign of the six direct BlueROV thruster inputs.
 
 Runs short one-environment probes for +/-x, +/-y and +/-z references and
 prints the measured world-frame displacement and velocity.  This is a sanity
@@ -16,6 +16,9 @@ from marinegym.utils.torch import quat_axis, quat_rotate_inverse
 
 def main() -> None:
     cfg = load_task_config("Hover", 1, True)
+    # This probe bypasses the high-level PID interface and tests the actuator
+    # convention itself.  Keep the historical filename for compatibility.
+    cfg.task.control_mode = "direct"
     app = init_simulation_app(cfg)
     env = None
     try:
@@ -46,7 +49,7 @@ def main() -> None:
             env.target_pos = pose[:, 0, :].clone()
             env.target_heading.zero_()
             p0 = env.drone.get_state()[..., :3].detach().clone()
-            action = torch.zeros((1, 4), device=env.device)
+            action = torch.zeros((1, 6), device=env.device)
             action[:, axis] = value
             for _ in range(40):
                 td.set(("agents", "action"), action)

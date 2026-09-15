@@ -23,7 +23,8 @@ This work is based on the original [MarineGym](https://github.com/Marine-RL/Mari
 - [x] Run the Hover environment and 16-way parallel smoke test
 - [x] Restore PPO training and evaluation for Hover and Track
 - [x] Validate checkpoint saving and loading
-- [ ] Validate the optional S-surface Hover controller against the BlueROV thruster frame
+- [x] Add a BlueROV-specific PID controller and geometry-based thruster allocator
+- [ ] Validate PID gains and all six force/torque directions in the Isaac Sim scene
 - [ ] Port remaining/unregistered environments (the repository contains no `landing.py`)
 
 The first compatibility milestone can be tested independently from the MarineGym environments:
@@ -112,32 +113,37 @@ simple Isaac Sim API rename.
 
 The training script is located in the `scripts` folder, named `train.py`.
 
-### S-surface Hover (experimental, opt-in)
+### BlueROV PID Hover (current low-level baseline)
 
-The default `Hover` configuration uses direct six-thruster actions so that the
-baseline PPO path stays simple and reproducible. An experimental
-sliding-surface control path is also included. When enabled, the policy
-outputs four normalized references `(v_x, v_y, v_z, yaw)`;
-the controller forms `s = (v - v_ref) + lambda * (p - p_ref)` and applies a
-smooth `tanh` reaching term before the existing rotor mixer. The path is
-engineering-complete enough for smoke tests and short PPO runs, but its
-world-frame sign convention has not yet been validated against the BlueROV
-USD thruster axes. Use the two diagnostic scripts before treating it as a
-research result:
+The default `Hover` configuration now uses a conventional cascaded PID loop.
+The controller computes a world-frame position force and body-frame attitude
+torque, then allocates the six-dimensional wrench through the actual thruster
+positions and axes read from the BlueROV USD asset. A future RL guidance policy
+can output `(v_x, v_y, v_z, yaw)` references while PID handles the individual
+T200 commands.
+
+Run a fixed-target PID smoke test with:
 
 ```bash
-python scripts/smoke_test_s_surface_controller.py
+python scripts/run_pid_hover.py --headless --steps 500
+```
+
+Use `--no-headless` to open the Isaac Sim viewport. The test writes a CSV with
+position and `pos_error` samples. Before tuning gains, run the direct actuator
+direction probe:
+
+```bash
 python scripts/smoke_test_s_surface_direction.py
 ```
 
-The first checks finite, sign-sensitive rotor commands. The second runs a
-controlled simulator probe and prints measured world-frame displacement; a
-real vehicle/asset geometry check is still required before tuning gains.
+The historical `s_surface_controller.py` remains in the repository for
+comparison, but it is not used by the default Hover path. To recover the old
+six-dimensional direct PPO baseline, override `task.control_mode=direct`.
 
-The default direct-control Hover task now uses a small initial-position
-curriculum: episodes start within roughly 0.5 m of the target and expand to
-the original 2.5 m range over 200 episodes. Set `curriculum.enable: false` in
-`cfg/task/Hover.yaml` to restore the original random initialization.
+The Hover task uses a small initial-position curriculum: episodes start within
+roughly 0.5 m of the target and expand to the original 2.5 m range over 200
+episodes. Set `curriculum.enable: false` in `cfg/task/Hover.yaml` to restore
+the original random initialization.
 
 
 To start the training process, run:
