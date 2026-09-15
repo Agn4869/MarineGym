@@ -51,9 +51,13 @@ def main() -> None:
             p0 = env.drone.get_state()[..., :3].detach().clone()
             action = torch.zeros((1, 6), device=env.device)
             action[:, axis] = value
+            if label == "+x":
+                print(f"[ACTION_TEST] shape={tuple(action.shape)} action={action.tolist()}", flush=True)
             for _ in range(40):
                 td.set(("agents", "action"), action)
                 td = env.step(td)
+            if label == "+x":
+                print(f"[ACTION_TEST] throttle={env.drone.throttle[0, 0].detach().cpu().tolist()}", flush=True)
             state = env.drone.get_state()
             delta = (state[..., :3] - p0)[..., 0, :].squeeze(0)
             # get_state layout is position(3), quaternion(4), linear velocity(3).

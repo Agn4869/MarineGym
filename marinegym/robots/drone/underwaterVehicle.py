@@ -176,19 +176,35 @@ class UnderwaterVehicle(RobotBase):
         )
 
         rotor_pos, rotor_rot = self.rotors_view.get_world_poses()
-        torque_axis = quat_axis(rotor_rot.flatten(end_dim=-2), axis=2).unflatten(0, (*self.shape, self.num_rotors))
+        # T200 returns a signed scalar force along each rotor's local +X axis.
+        # Convert that local force to world coordinates explicitly before
+        # passing it to Isaac Sim.  Relying on ``is_global=False`` here is
+        # ambiguous for nested articulation links and was observed to produce
+        # non-zero throttle with almost no measured X/Y motion.
+        local_force = torch.zeros_like(self.thrusts)
+        local_force[..., 0] = thrusts
+        self.thrusts[:] = quat_rotate(rotor_rot, local_force)
 
-        self.thrusts[..., 0] = thrusts
-        self.torques[:] = (moments.unsqueeze(-1) * torque_axis).sum(-2)
+        torque_axis = quat_axis(rotor_rot.flatten(end_dim=-2), axis=2).unflatten(0, (*self.shape, self.num_rotors))
+        rotor_spin_torque = (moments.unsqueeze(-1) * torque_axis).sum(-2)
+        base_pos, _ = self.get_world_poses()
+        lever_arms = rotor_pos - base_pos.unsqueeze(-2)
+        # Applying the equivalent wrench to the base link is exactly
+        # equivalent to applying each thruster force at its rotor position for
+        # a rigid vehicle, while avoiding articulation-link force propagation
+        # differences between Isaac Sim versions.
+        thruster_force_world = self.thrusts.sum(-2)
+        thruster_torque_world = torch.linalg.cross(lever_arms, self.thrusts, dim=-1).sum(-2) + rotor_spin_torque
         self.forces.zero_()
         flow_vels = self.flow_vels  + torch.rand_like(self.flow_vels) * self.flow_noise_scale
         hydro_forces, hydro_torques = self.apply_hydrodynamic_forces(flow_vels)
         self.forces += hydro_forces
         self.torques += hydro_torques
 
-        self.rotors_view.apply_forces_and_torques_at_pos(
-            self.thrusts.reshape(-1, 3), 
-            is_global=False
+        self.base_link.apply_forces_and_torques_at_pos(
+            thruster_force_world.reshape(-1, 3),
+            thruster_torque_world.reshape(-1, 3),
+            is_global=True,
         )
 
         self.base_link.apply_forces_and_torques_at_pos(
