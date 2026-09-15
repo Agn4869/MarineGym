@@ -30,20 +30,21 @@ import torch
 import logging
 import carb
 import numpy as np
-from omni.isaac.cloner import GridCloner
-from omni.isaac.core.simulation_context import SimulationContext
-from omni.isaac.core.utils import prims as prim_utils, stage as stage_utils
-from omni.isaac.core.utils.extensions import enable_extension
-from omni.isaac.core.utils.viewports import set_camera_view
-
 from tensordict.tensordict import TensorDict, TensorDictBase
 from torchrl.data import CompositeSpec, TensorSpec, DiscreteTensorSpec
 from torchrl.envs import EnvBase
 
 from marinegym.robots.robot import RobotBase
+from marinegym.utils.isaacsim_compat import (
+    GridCloner,
+    SimulationContext,
+    _debug_draw,
+    enable_extension,
+    prim_utils,
+    set_camera_view,
+    stage_utils,
+)
 from marinegym.utils.torchrl import AgentSpec
-
-from omni.isaac.debug_draw import _debug_draw
 
 class DebugDraw:
     def __init__(self):
@@ -229,19 +230,14 @@ class IsaacEnv(EnvBase):
         """
         raise NotImplementedError
 
-    def close(self):
-        return # TODO: fix this
-        if not self._is_closed:
-            # stop physics simulation (precautionary)
-            self.sim.stop()
-            # cleanup the scene and callbacks
-            self.sim.clear_all_callbacks()
-            self.sim.clear()
-            # fix warnings at stage close
-            omni.usd.get_context().get_stage().GetRootLayer().Clear()
-            # update closing status
-            self._is_closed = True
-            logging.info("IsaacEnv closed.")
+    def close(self, *, raise_if_closed: bool = True):
+        """Mark the environment closed using the current TorchRL API.
+
+        SimulationApp owns the Isaac Sim stage lifecycle.  TorchRL wrappers
+        still call ``close(raise_if_closed=...)`` on the base environment, so
+        keep this method lightweight while accepting the modern signature.
+        """
+        return super().close(raise_if_closed=raise_if_closed)
 
     def _reset(self, tensordict: TensorDictBase, **kwargs) -> TensorDictBase:
         if tensordict is not None:

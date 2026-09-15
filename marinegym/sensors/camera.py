@@ -20,21 +20,19 @@
 # OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 # SOFTWARE.
 import math
+import numpy as np
 
 from typing import Optional, Union, Sequence
 
-import omni.isaac.core.utils.prims as prim_utils
-import omni.isaac.core.utils.stage as stage_utils
 import omni.replicator.core as rep
 
 import torch
 import warp as wp
-from omni.isaac.core.prims import XFormPrim
-from omni.isaac.core.simulation_context import SimulationContext
 from pxr import Gf, Sdf, UsdGeom
 from tensordict import TensorDict
 
 from marinegym.utils.math import quaternion_to_euler
+from marinegym.utils.isaacsim_compat import SimulationContext, prim_utils
 from .config import FisheyeCameraCfg, PinholeCameraCfg
 
 class Camera:
@@ -137,11 +135,25 @@ class Camera:
         for annotators in self.annotators:
             images_dict = {}
             for k, v in annotators.items():
-                img_tensor = wp.to_torch(v.get_data(device=self.device))
-                if img_tensor.dim() == 2:
+                # Isaac Sim 5 may return a one-dimensional Warp buffer when
+                # ``device="cuda"`` is requested.  Reading the annotator on
+                # CPU preserves its image dimensions and is robust across
+                # Isaac Sim 4.x/5.x; move the resulting tensor afterwards.
+                data = v.get_data(device="cpu")
+                img_tensor = torch.as_tensor(np.asarray(data))
+                if img_tensor.ndim == 2:
                     img_tensor = img_tensor.unsqueeze(0)
-                else:
+                elif img_tensor.ndim == 3:
                     img_tensor = img_tensor.permute(2, 0, 1)
+                else:
+                    raise RuntimeError(
+                        f"Annotator {k!r} returned unsupported shape {tuple(img_tensor.shape)}"
+                    )
+                if k == "rgb" and img_tensor.shape[0] == 4:
+                    # Replicator returns RGBA for RGB requests in Isaac Sim 5.
+                    img_tensor = img_tensor[:3]
+                if str(self.device).startswith("cuda"):
+                    img_tensor = img_tensor.to(self.device)
                 images_dict[k] = img_tensor
             images_list.append(TensorDict(images_dict, []))
         return torch.stack(images_list)

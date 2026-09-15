@@ -1,9 +1,8 @@
 import torch
 import torch.distributions as D
 
-import omni.isaac.core.utils.prims as prim_utils
-
 from marinegym.envs.isaac_env import AgentSpec, IsaacEnv
+from marinegym.utils.isaacsim_compat import prim_utils
 from marinegym.views import ArticulationView, RigidPrimView
 from marinegym.utils.torch import euler_to_quaternion, quat_axis
 
@@ -63,9 +62,9 @@ class Hover(IsaacEnv):
             torch.tensor([-.2, -.2, 0.], device=self.device) * torch.pi,
             torch.tensor([0.2, 0.2, 2.], device=self.device) * torch.pi
         )
-        self.target_rpy_dist = D.Uniform(
-            torch.tensor([0., 0., 0.], device=self.device) * torch.pi,
-            torch.tensor([0., 0., 2.], device=self.device) * torch.pi
+        self.target_yaw_dist = D.Uniform(
+            torch.tensor(0.0, device=self.device),
+            torch.tensor(2.0 * torch.pi, device=self.device),
         )
 
         self.target_pos = torch.tensor([[0.0, 0.0, 2.]], device=self.device)
@@ -74,7 +73,7 @@ class Hover(IsaacEnv):
 
     def _design_scene(self):
         import marinegym.utils.kit as kit_utils
-        import omni.isaac.core.utils.prims as prim_utils
+        from marinegym.utils.isaacsim_compat import prim_utils, stage_utils
 
         drone_model_cfg = self.cfg.task.drone_model
         self.drone, self.controller = UnderwaterVehicle.make(
@@ -82,7 +81,6 @@ class Hover(IsaacEnv):
         )
         
         from marinegym.robots.robot import ASSET_PATH
-        import omni.isaac.core.utils.stage as stage_utils
         stage_utils.add_reference_to_stage(usd_path= ASSET_PATH + "/usd/worlds/EmptyMarine.usd",prim_path="/World/defaultGroundPlane")
 
         target_vis_prim = prim_utils.create_prim(
@@ -176,7 +174,8 @@ class Hover(IsaacEnv):
             payload_mass = self.payload_mass_dist.sample(env_ids.shape+(1,)) * self.drone.masses[env_ids]
             self.payload.set_masses(payload_mass, env_indices=env_ids)
 
-        target_rpy = self.target_rpy_dist.sample((*env_ids.shape, 1))
+        target_rpy = torch.zeros(*env_ids.shape, 1, 3, device=self.device)
+        target_rpy[..., 2] = self.target_yaw_dist.sample((*env_ids.shape, 1))
         target_rot = euler_to_quaternion(target_rpy)
         self.target_heading[env_ids] = quat_axis(target_rot.squeeze(1), 0).unsqueeze(1)
         self.target_vis.set_world_poses(orientations=target_rot, env_indices=env_ids)

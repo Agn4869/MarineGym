@@ -29,23 +29,40 @@ class M600(nn.Module):
 
         self.requires_grad_(False)
 
-    def forward(self, cmds: torch.Tensor):
+    def forward(self, cmds: torch.Tensor, params=None):
+        if params is None:
+            force_constants = self.force_constants
+            throttle = self.throttle
+            directions = self.directions
+            tau_up = self.tau_up
+            tau_down = self.tau_down
+            rpm_state = self.rpm
+            time_constants = self.time_constants
+        else:
+            force_constants = params["force_constants"]
+            throttle = params["throttle"]
+            directions = params["directions"]
+            tau_up = params["tau_up"]
+            tau_down = params["tau_down"]
+            rpm_state = params["rpm"]
+            time_constants = params["time_constants"]
+
         target_throttle = torch.clamp(cmds, -1, 1)
 
-        tau = torch.where(target_throttle > self.throttle, self.tau_up, self.tau_down)
+        tau = torch.where(target_throttle > throttle, tau_up, tau_down)
         tau = torch.clamp(tau, 0, 1)
-        self.throttle.add_(tau * (target_throttle - self.throttle))
+        throttle.add_(tau * (target_throttle - throttle))
         
-        target_rpm = torch.where(self.throttle > 0.075, 5.6599e+02 * self.throttle + 3.4521e+01,
-        torch.where(self.throttle < -0.075, 5.4944e+02 * self.throttle - 4.3350e+01, torch.zeros_like(self.throttle)
+        target_rpm = torch.where(throttle > 0.075, 5.6599e+02 * throttle + 3.4521e+01,
+        torch.where(throttle < -0.075, 5.4944e+02 * throttle - 4.3350e+01, torch.zeros_like(throttle)
         ))
-        alpha = torch.exp(-self.dt / self.time_constants)
+        alpha = torch.exp(-self.dt / time_constants)
         
-        noise = torch.randn_like(self.rpm) * self.noise_scale * 0.
-        rpm = alpha * self.rpm + (1 - alpha) * target_rpm
-        self.rpm = torch.clamp(rpm + noise, -600, 600)
+        noise = torch.randn_like(rpm_state) * self.noise_scale * 0.
+        rpm = alpha * rpm_state + (1 - alpha) * target_rpm
+        rpm_state.copy_(torch.clamp(rpm + noise, -600, 600))
         
-        thrusts = self.force_constants * torch.abs(self.rpm) * self.rpm
-        moments = thrusts * -self.directions * 0        
+        thrusts = force_constants * torch.abs(rpm_state) * rpm_state
+        moments = thrusts * -directions * 0
 
         return thrusts, moments

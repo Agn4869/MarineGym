@@ -20,4 +20,17 @@
 # OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 # SOFTWARE.
 
+__all__ = ["Camera", "FisheyeCameraCfg", "PinholeCameraCfg"]
+
+
+def __getattr__(name):
+    """Load Isaac-dependent sensor modules only when explicitly requested."""
+    if name == "Camera":
+        from .camera import Camera
+        return Camera
+    if name in {"FisheyeCameraCfg", "PinholeCameraCfg"}:
+        from .config import FisheyeCameraCfg, PinholeCameraCfg
+        return {"FisheyeCameraCfg": FisheyeCameraCfg, "PinholeCameraCfg": PinholeCameraCfg}[name]
+    raise AttributeError(name)
+
 

@@ -27,24 +27,37 @@ class fin200(nn.Module):
 
         self.requires_grad_(False)
 
-    def forward(self, cmds: torch.Tensor, flow_vels: torch.Tensor, fin_pos, fin_rot, fin_vel):
-        target_angle = torch.clamp(cmds, -1, 1)
-        alpha = torch.exp(-self.dt / self.time_constants)
-        noise = torch.randn_like(self.angle) * self.noise_scale * 0.
+    def forward(self, cmds: torch.Tensor, flow_vels: torch.Tensor, fin_pos, fin_rot, fin_vel, params=None):
+        if params is None:
+            lift_constant = self.liftConstant
+            drag_constant = self.dragConstant
+            max_joint_limit = self.max_joint_limit
+            time_constants = self.time_constants
+            angle_state = self.angle
+        else:
+            lift_constant = params["liftConstant"]
+            drag_constant = params["dragConstant"]
+            max_joint_limit = params["max_joint_limit"]
+            time_constants = params["time_constants"]
+            angle_state = params["angle"]
 
-        angle = alpha * self.angle + (1 - alpha) * target_angle
-        self.angle = torch.clamp(angle + noise, -self.max_joint_limit, self.max_joint_limit)
+        target_angle = torch.clamp(cmds, -1, 1)
+        alpha = torch.exp(-self.dt / time_constants)
+        noise = torch.randn_like(angle_state) * self.noise_scale * 0.
+
+        angle = alpha * angle_state + (1 - alpha) * target_angle
+        angle_state.copy_(torch.clamp(angle + noise, -max_joint_limit, max_joint_limit))
         
 
 
-        unitz = torch.zeros(fin_rot.shape[0], 3, device='cuda')
+        unitz = torch.zeros(fin_rot.shape[0], 3, device=fin_rot.device, dtype=fin_rot.dtype)
         unitz[:, 2] = 1
         ldNormalI = quat_rotate(fin_rot,unitz)
         velI = fin_vel - flow_vels
         velInLDPlaneI = torch.cross(ldNormalI, torch.cross(velI[...,0:3], ldNormalI,dim=1), dim=1)
         _velInLDPlaneL = quat_rotate_inverse(fin_rot, velInLDPlaneI)
 
-        attack_angle = torch.atan(_velInLDPlaneL[..., 1] / _velInLDPlaneL[..., 0])
+        attack_angle = torch.atan2(_velInLDPlaneL[..., 1], _velInLDPlaneL[..., 0])
         update_angle = torch.where(attack_angle > 1.57, attack_angle - 3.14, attack_angle)
         update_angle = torch.where(attack_angle < -1.57, attack_angle + 3.14, attack_angle)
         update_velInLDPlaneL = torch.where(attack_angle.unsqueeze(1).repeat(1, 3) > 1.57, -_velInLDPlaneL, _velInLDPlaneL)
@@ -54,16 +67,16 @@ class fin200(nn.Module):
         u2 = u ** 2
         du2 = update_angle * u2
 
-        drag = update_angle * du2 * self.dragConstant
-        lift = du2 * self.liftConstant
+        drag = update_angle * du2 * drag_constant
+        lift = du2 * lift_constant
         liftDirectionL = - torch.cross(unitz, _velInLDPlaneL, dim=1)
         dragDirectionL = -_velInLDPlaneL
 
-        liftDirectionL_unit = liftDirectionL / liftDirectionL.norm(dim=1, keepdim=True)
-        dragDirectionL_unit = dragDirectionL / dragDirectionL.norm(dim=1, keepdim=True)
+        liftDirectionL_unit = liftDirectionL / liftDirectionL.norm(dim=1, keepdim=True).clamp_min(1e-6)
+        dragDirectionL_unit = dragDirectionL / dragDirectionL.norm(dim=1, keepdim=True).clamp_min(1e-6)
 
         lift_vector = lift.unsqueeze(1) * liftDirectionL_unit
         drag_vector = drag.unsqueeze(1) * dragDirectionL_unit
 
         total_force = lift_vector + drag_vector
-        return total_force, self.angle
+        return total_force, angle_state

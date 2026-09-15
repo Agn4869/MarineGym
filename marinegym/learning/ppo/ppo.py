@@ -98,7 +98,11 @@ class PPOPolicy(TensorDictModuleBase):
         self.entropy_coef = 0.001
         self.clip_param = 0.1
         self.critic_loss_fn = nn.HuberLoss(delta=10)
-        self.n_agents, self.action_dim = action_spec.shape[-2:]
+        # Composite specs expose only their environment batch shape in recent
+        # TorchRL versions.  The agent and action dimensions live on the
+        # actual action leaf instead of on the root CompositeSpec.
+        action_leaf_spec = action_spec[("agents", "action")]
+        self.n_agents, self.action_dim = action_leaf_spec.shape[-2:]
         self.gae = GAE(0.99, 0.95)
 
         fake_input = observation_spec.zero()
@@ -154,7 +158,11 @@ class PPOPolicy(TensorDictModuleBase):
         self.critic(fake_input)
 
         if self.cfg.checkpoint_path is not None:
-            state_dict = torch.load(self.cfg.checkpoint_path)
+            state_dict = torch.load(
+                self.cfg.checkpoint_path,
+                map_location=self.device,
+                weights_only=True,
+            )
             self.load_state_dict(state_dict, strict=False)
         else:
             def init_(module):
@@ -167,7 +175,8 @@ class PPOPolicy(TensorDictModuleBase):
 
         self.actor_opt = torch.optim.Adam(self.actor.parameters(), lr=5e-4)
         self.critic_opt = torch.optim.Adam(self.critic.parameters(), lr=5e-4)
-        self.value_norm = ValueNorm1(reward_spec.shape[-2:]).to(self.device)
+        reward_leaf_spec = reward_spec[("agents", "reward")]
+        self.value_norm = ValueNorm1(reward_leaf_spec.shape[-2:]).to(self.device)
 
     def __call__(self, tensordict: TensorDict):
         self.actor(tensordict)

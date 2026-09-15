@@ -34,7 +34,7 @@ from omni.isaac.core.utils.types import JointsState, ArticulationActions
 from omni.isaac.core.articulations import ArticulationView as _ArticulationView
 from omni.isaac.core.prims import RigidPrimView as _RigidPrimView
 from omni.isaac.core.prims import XFormPrimView
-from omni.isaac.core.simulation_context import SimulationContext
+from marinegym.utils.isaacsim_compat import SimulationContext, get_physics_sim_view
 import omni
 import functools
 
@@ -43,7 +43,7 @@ def require_sim_initialized(func):
 
     @functools.wraps(func)
     def _func(*args, **kwargs):
-        if SimulationContext.instance()._physics_sim_view is None:
+        if get_physics_sim_view() is None:
             raise RuntimeError("SimulationContext not initialzed.")
         return func(*args, **kwargs)
 
@@ -224,14 +224,14 @@ class ArticulationView(_ArticulationView):
         if not omni.timeline.get_timeline_interface().is_stopped() and self._physics_view is not None:
             if self.num_dof == 0:
                 return None
-            self._physics_sim_view.enable_warnings(False)
-            joint_positions = self._physics_view.get_dof_position_targets()
-            if clone:
-                joint_positions = self._backend_utils.clone_tensor(joint_positions, device=self._device)
-            joint_velocities = self._physics_view.get_dof_velocity_targets()
-            if clone:
-                joint_velocities = self._backend_utils.clone_tensor(joint_velocities, device=self._device)
-            self._physics_sim_view.enable_warnings(True)
+            physics_sim_view = getattr(self, "_physics_sim_view", None) or get_physics_sim_view()
+            with disable_warnings(physics_sim_view):
+                joint_positions = self._physics_view.get_dof_position_targets()
+                if clone:
+                    joint_positions = self._backend_utils.clone_tensor(joint_positions, device=self._device)
+                joint_velocities = self._physics_view.get_dof_velocity_targets()
+                if clone:
+                    joint_velocities = self._backend_utils.clone_tensor(joint_velocities, device=self._device)
             # TODO: implement the effort part
             return ArticulationActions(
                 joint_positions=joint_positions,
@@ -244,18 +244,27 @@ class ArticulationView(_ArticulationView):
             return None
 
     def get_world_poses(
-        self, env_indices: Optional[torch.Tensor] = None, clone: bool = True
+        self,
+        env_indices: Optional[torch.Tensor] = None,
+        clone: bool = True,
+        usd: bool = True,
     ) -> Tuple[torch.Tensor, torch.Tensor]:
         indices = self._resolve_env_indices(env_indices)
-        if self._physics_view is not None:
-            with disable_warnings(self._physics_sim_view):
+        physics_sim_view = getattr(self, "_physics_sim_view", None)
+        if self._physics_view is not None and physics_sim_view is not None:
+            with disable_warnings(physics_sim_view):
                 poses = self._physics_view.get_root_transforms()[indices]
                 poses = torch.unflatten(poses, 0, self.shape)
             if clone:
                 poses = poses.clone()
             return poses[..., :3], poses[..., [6, 3, 4, 5]]
         else:
-            pos, rot = super().get_world_poses(indices, clone)
+            try:
+                pos, rot = super().get_world_poses(indices, clone, usd=usd)
+            except TypeError as exc:
+                if "unexpected keyword argument 'usd'" not in str(exc):
+                    raise
+                pos, rot = super().get_world_poses(indices, clone)
             return pos.unflatten(0, self.shape), rot.unflatten(0, self.shape)
 
     def set_world_poses(
@@ -263,9 +272,19 @@ class ArticulationView(_ArticulationView):
         positions: Optional[torch.Tensor] = None,
         orientations: Optional[torch.Tensor] = None,
         env_indices: Optional[torch.Tensor] = None,
+        usd: bool = True,
     ) -> None:
-        with disable_warnings(self._physics_sim_view):
-            indices = self._resolve_env_indices(env_indices)
+        indices = self._resolve_env_indices(env_indices)
+        physics_sim_view = getattr(self, "_physics_sim_view", None)
+        if self._physics_view is None or physics_sim_view is None:
+            try:
+                return super().set_world_poses(positions, orientations, indices, usd=usd)
+            except TypeError as exc:
+                if "unexpected keyword argument 'usd'" not in str(exc):
+                    raise
+                return super().set_world_poses(positions, orientations, indices)
+
+        with disable_warnings(physics_sim_view):
             poses = self._physics_view.get_root_transforms()
             if positions is not None:
                 poses[indices, :3] = positions.reshape(-1, 3)
@@ -388,7 +407,8 @@ class ArticulationView(_ArticulationView):
         return super().set_body_masses(values.reshape(-1, self.num_bodies), indices)
 
     def get_force_sensor_forces(self, env_indices: Optional[torch.Tensor] = None, clone: bool = False) -> torch.Tensor:
-        with disable_warnings(self._physics_sim_view):
+        physics_sim_view = getattr(self, "_physics_sim_view", None) or get_physics_sim_view()
+        with disable_warnings(physics_sim_view):
             forces = torch.unflatten(self._physics_view.get_force_sensor_forces(), 0, self.shape)
         if clone:
             forces = forces.clone()
@@ -455,14 +475,32 @@ class RigidPrimView(_RigidPrimView):
     @require_sim_initialized
     def initialize(self, physics_sim_view: omni.physics.tensors.SimulationView = None):
         super().initialize(physics_sim_view)
+        self._physics_sim_view = physics_sim_view or get_physics_sim_view()
         self.shape = torch.arange(self.count).reshape(self.shape).shape
         return self
 
     def get_world_poses(
-        self, env_indices: Optional[torch.Tensor] = None, clone: bool = True
+        self,
+        env_indices: Optional[torch.Tensor] = None,
+        clone: bool = True,
+        usd: bool = True,
     ) -> Tuple[torch.Tensor, torch.Tensor]:
         indices = self._resolve_env_indices(env_indices)
-        pos, rot = super().get_world_poses(indices, clone)
+        physics_sim_view = getattr(self, "_physics_sim_view", None)
+        if self._physics_view is not None and physics_sim_view is not None:
+            with disable_warnings(physics_sim_view):
+                poses = self._physics_view.get_transforms()[indices]
+                poses = torch.unflatten(poses, 0, self.shape)
+            if clone:
+                poses = poses.clone()
+            return poses[..., :3], poses[..., [6, 3, 4, 5]]
+
+        try:
+            pos, rot = super().get_world_poses(indices, clone, usd=usd)
+        except TypeError as exc:
+            if "unexpected keyword argument 'usd'" not in str(exc):
+                raise
+            pos, rot = super().get_world_poses(indices, clone)
         return pos.unflatten(0, self.shape), rot.unflatten(0, self.shape)
 
     def set_world_poses(
@@ -470,9 +508,19 @@ class RigidPrimView(_RigidPrimView):
         positions: Optional[torch.Tensor] = None,
         orientations: Optional[torch.Tensor] = None,
         env_indices: Optional[torch.Tensor] = None,
+        usd: bool = True,
     ) -> None:
-        with disable_warnings(self._physics_sim_view):
-            indices = self._resolve_env_indices(env_indices)
+        indices = self._resolve_env_indices(env_indices)
+        physics_sim_view = getattr(self, "_physics_sim_view", None)
+        if self._physics_view is None or physics_sim_view is None:
+            try:
+                return super().set_world_poses(positions, orientations, indices, usd=usd)
+            except TypeError as exc:
+                if "unexpected keyword argument 'usd'" not in str(exc):
+                    raise
+                return super().set_world_poses(positions, orientations, indices)
+
+        with disable_warnings(physics_sim_view):
             poses = self._physics_view.get_transforms()
             if positions is not None:
                 poses[indices, :3] = positions.reshape(-1, 3)

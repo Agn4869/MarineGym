@@ -26,16 +26,18 @@ import os.path as osp
 from contextlib import contextmanager
 from typing import Dict, Sequence, Type
 
-import omni.isaac.core.utils.prims as prim_utils
-import omni.isaac.core.utils.torch as torch_utils
-
 import omni.timeline
 import torch
 from marinegym.views import ArticulationView, RigidPrimView
-from omni.isaac.core.simulation_context import SimulationContext
 from torchrl.data import TensorSpec
 
 import marinegym.utils.kit as kit_utils
+from marinegym.utils.isaacsim_compat import (
+    SimulationContext,
+    get_physics_sim_view,
+    prim_utils,
+    torch_utils,
+)
 
 from marinegym.robots.config import (
     ArticulationRootPropertiesCfg,
@@ -74,7 +76,7 @@ class RobotBase(abc.ABC):
 
         self.n = 0
 
-        if SimulationContext._instance is None:
+        if SimulationContext.instance() is None:
             raise RuntimeError("The SimulationContext is not created.")
 
         self.cfg = cfg
@@ -99,7 +101,7 @@ class RobotBase(abc.ABC):
         orientations=None,
         prim_paths: Sequence[str] = None
     ):
-        if SimulationContext.instance()._physics_sim_view is not None:
+        if get_physics_sim_view() is not None:
             raise RuntimeError(
                 "Cannot spawn robots after simulation_context.reset() is called."
             )
@@ -161,7 +163,7 @@ class RobotBase(abc.ABC):
         self,
         prim_paths_expr: str = None,
     ):
-        if SimulationContext.instance()._physics_sim_view is None:
+        if get_physics_sim_view() is None:
             raise RuntimeError(
                 f"Cannot initialize {self.__class__.__name__} before the simulation context resets."
                 "Call simulation_context.reset() first."

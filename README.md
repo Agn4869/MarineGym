@@ -4,11 +4,55 @@
 
 # MarineGym
 
-[![IsaacSim](https://img.shields.io/badge/Isaac%20Sim-4.1.0-orange.svg)](https://docs.isaacsim.omniverse.nvidia.com/4.2.0/archived_release_notes.html)
-[![Python](https://img.shields.io/badge/python-3.10-blue.svg)](https://docs.python.org/3/whatsnew/3.7.html)
+[![IsaacSim](https://img.shields.io/badge/Isaac%20Sim-5.0-orange.svg)](https://developer.nvidia.com/isaac/sim)
+[![Python](https://img.shields.io/badge/python-3.11-blue.svg)](https://docs.python.org/3.11/)
 [![Docs](https://img.shields.io/badge/docs-passing-brightgreen)](https://marinegym.netlify.app/)
 [![Website](https://img.shields.io/website?url=https%3A%2F%2Fmarine-gym.com&label=website&up_message=online&down_message=offline)](https://marine-gym.com/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
+
+> [!NOTE]
+> This branch ports the runnable MarineGym path to Isaac Sim 5.0 and Python 3.11.
+> The upstream MarineGym release targets Isaac Sim 4.1 and Python 3.10.
+
+## Isaac Sim 5.0 Porting Status
+
+This work is based on the original [MarineGym](https://github.com/Marine-RL/MarineGym) project.
+
+- [x] Start MarineGym with Isaac Sim 5.0
+- [x] Update deprecated Isaac Sim and TorchRL APIs used by the runnable path
+- [x] Run the Hover environment and 16-way parallel smoke test
+- [x] Restore PPO training and evaluation for Hover and Track
+- [x] Validate checkpoint saving and loading
+- [ ] Port remaining/unregistered environments (the repository contains no `landing.py`)
+
+The first compatibility milestone can be tested independently from the MarineGym environments:
+
+```bash
+# Headless startup test (recommended first)
+python scripts/smoke_test_simulation_app.py
+
+# Windowed startup test
+python scripts/smoke_test_simulation_app.py --no-headless
+```
+
+A successful run prints `[PASS] Isaac Sim bootstrap completed ...` and closes Isaac Sim cleanly.
+
+### Reproducible smoke tests
+
+From the repository root, after activating the Isaac Sim 5.0 Python environment:
+
+```bash
+python scripts/smoke_test_task.py --task Hover --num-envs 16 --steps 10
+python scripts/smoke_test_task.py --task Track --num-envs 16 --steps 10
+python scripts/smoke_test_camera.py --headless
+```
+
+For servers where PyTorch shared libraries are not on the default loader path:
+
+```bash
+TORCH_LIB_PATH=$(python -c 'import os,torch; print(os.path.join(os.path.dirname(torch.__file__), "lib"))')
+export LD_LIBRARY_PATH="$TORCH_LIB_PATH:${LD_LIBRARY_PATH:-}"
+```
 
 *MarineGym* is a large-scale parallel framework designed for reinforcement learning research on unmanned underwater vehicles (UUVs). It is built upon [OmniDrones](https://github.com/btx0424/OmniDrones) and [Isaac Sim](https://developer.nvidia.com/isaac/sim), offering the following features:
 
@@ -38,7 +82,32 @@ For training and evaluation commands, please take a look at the [Quick Start](ht
 ## Usage
 For installation details, please refer to our [Setup Guide](https://marinegym.netlify.app/installation_from_source/).
 
-Currently, five gym environments are verified: Hover, Circle Tracking, Helical Tracking, Lemniscate Tracking, and Landing. Additional environments, including vision-based and sonar-based tasks, are under development.
+The currently registered and verified environments in this branch are `Hover` and `Track`.
+`Track` contains the circle/helical/lemniscate trajectory helpers. `Landing.yaml` exists in
+the upstream configuration, but this checkout does not contain a corresponding `landing.py`
+implementation, so Landing is not reported as migrated yet.
+
+### Vision and sonar status
+
+The sensor layer includes a camera wrapper with RGB and depth annotators, depth
+normalization, image export helpers, and MobileNetV3-based vision encoders. The
+camera path is verified independently on Isaac Sim 5.0 with:
+
+```bash
+python scripts/smoke_test_camera.py --headless
+```
+
+This returns RGB tensors with shape `(N, 3, H, W)` and depth tensors with shape
+`(N, 1, H, W)`. No registered task currently consumes these images, so a vision
+RL task still needs an observation adapter that attaches cameras to each cloned
+robot and feeds the image keys into `MixedEncoder`.
+
+Sonar is not implemented in this checkout. The only related references are
+future-work comments for scene-query/LiDAR support; there is no sonar sensor,
+sonar observation spec, or sonar task to port. A future sonar migration should
+therefore be treated as a new sensor implementation (ray casting or a dedicated
+underwater acoustic model), followed by a task and sensor smoke test—not as a
+simple Isaac Sim API rename.
 
 The training script is located in the `scripts` folder, named `train.py`.
 
@@ -46,9 +115,18 @@ The training script is located in the `scripts` folder, named `train.py`.
 To start the training process, run:
 
 ```bash
-python train.py task=Hover algo=ppo headless=false enable_livestream=false
+PYTHONPATH=.. python -u scripts/train.py task=Hover algo=ppo headless=true \
+    enable_livestream=false wandb.mode=offline \
+    task.env.num_envs=16 total_frames=1024 max_iters=2 save_interval=1
 ```
-where `task` specifies the training scenario, which can be `Hover`, `Track`, or `Landing`.
+where `task` currently supports `Hover` and `Track` in this branch. Use the new
+`scripts/evaluate.py` to load a saved checkpoint:
+
+```bash
+PYTHONPATH=.. python -u scripts/evaluate.py task=Hover algo=ppo headless=true \
+    task.env.num_envs=1 eval_episodes=1 \
+    algo.checkpoint_path=/absolute/path/to/checkpoint_final.pt
+```
 
 
 ## Citation

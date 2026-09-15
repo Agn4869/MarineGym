@@ -1,7 +1,6 @@
 
 import marinegym.utils.kit as kit_utils
 from marinegym.utils.torch import euler_to_quaternion, quat_rotate
-import omni.isaac.core.utils.prims as prim_utils
 import torch
 import torch.distributions as D
 from torch.func import vmap
@@ -10,8 +9,8 @@ from marinegym.views import ArticulationView, RigidPrimView
 from marinegym.envs.isaac_env import AgentSpec, IsaacEnv
 from tensordict.tensordict import TensorDict, TensorDictBase
 from torchrl.data import UnboundedContinuousTensorSpec, CompositeSpec, DiscreteTensorSpec
-from omni.isaac.debug_draw import _debug_draw
 from marinegym.robots.drone import UnderwaterVehicle
+from marinegym.utils.isaacsim_compat import _debug_draw, prim_utils, stage_utils
 
 from ..utils import lemniscate, scale_time, circle, helical, attach_payload
 
@@ -58,9 +57,9 @@ class Track(IsaacEnv):
             torch.tensor([-.2, -.2, 0.], device=self.device) * torch.pi,
             torch.tensor([0.2, 0.2, 2.], device=self.device) * torch.pi
         )
-        self.traj_rpy_dist = D.Uniform(
-            torch.tensor([0., 0., 0.], device=self.device) * torch.pi,
-            torch.tensor([0., 0., 2.], device=self.device) * torch.pi
+        self.traj_yaw_dist = D.Uniform(
+            torch.tensor(0.0, device=self.device),
+            torch.tensor(2.0 * torch.pi, device=self.device),
         )
         self.traj_c_dist = D.Uniform(
             torch.tensor(-0.6, device=self.device),
@@ -94,7 +93,6 @@ class Track(IsaacEnv):
             drone_model_cfg.name, drone_model_cfg.controller
         )
         from marinegym.robots.robot import ASSET_PATH
-        import omni.isaac.core.utils.stage as stage_utils
         stage_utils.add_reference_to_stage(usd_path= ASSET_PATH + "/usd/worlds/EmptyMarine.usd",prim_path="/World/defaultGroundPlane")
 
 
@@ -148,7 +146,9 @@ class Track(IsaacEnv):
             self.drone.set_flow_velocities(env_ids, self.max_flow_velocity, self.flow_velocity_gaussian_noise)
         self.drone._reset_idx(env_ids)
         self.traj_c[env_ids] = self.traj_c_dist.sample(env_ids.shape)
-        self.traj_rot[env_ids] = euler_to_quaternion(self.traj_rpy_dist.sample(env_ids.shape))
+        traj_rpy = torch.zeros(*env_ids.shape, 3, device=self.device)
+        traj_rpy[..., 2] = self.traj_yaw_dist.sample(env_ids.shape)
+        self.traj_rot[env_ids] = euler_to_quaternion(traj_rpy)
         self.traj_scale[env_ids] = self.traj_scale_dist.sample(env_ids.shape)
         traj_w = self.traj_w_dist.sample(env_ids.shape)
         self.traj_w[env_ids] = torch.randn_like(traj_w).sign() * traj_w

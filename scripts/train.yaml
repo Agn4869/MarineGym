@@ -15,6 +15,7 @@ total_frames: 20_000_000
 max_iters: -1
 eval_interval: -1
 save_interval: -1
+eval_episodes: 10
 seed: 0
 
 viewer:

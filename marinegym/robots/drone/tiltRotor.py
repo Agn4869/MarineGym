@@ -4,8 +4,7 @@ from typing import Type, Dict
 import torch
 import torch.distributions as D
 import yaml
-from functorch import vmap
-from tensordict.nn import make_functional
+from torch.func import vmap
 from torchrl.data import BoundedTensorSpec, CompositeSpec, UnboundedContinuousTensorSpec
 from tensordict import TensorDict
 
@@ -126,7 +125,7 @@ class TiltRotor(RobotBase):
         rotor_config = self.params["rotor_configuration"]
         self.rotors = T200(rotor_config, dt=self.dt).to(self.device)
 
-        rotor_params = make_functional(self.rotors)
+        rotor_params = TensorDict.from_module(self.rotors)
         # self.KF_0 = rotor_params["KF"].clone()
         # self.KM_0 = rotor_params["KM"].clone()
         self.MAX_ROT_VEL = (

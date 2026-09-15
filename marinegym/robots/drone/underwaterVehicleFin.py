@@ -4,8 +4,7 @@ from typing import Type, Dict
 import torch
 import torch.distributions as D
 import yaml
-from functorch import vmap
-from tensordict.nn import make_functional
+from torch.func import vmap
 from torchrl.data import BoundedTensorSpec, CompositeSpec, UnboundedContinuousTensorSpec
 from tensordict import TensorDict
 
@@ -125,7 +124,7 @@ class UnderwaterVehicleFin(RobotBase):
         rotor_config = self.params["rotor_configuration"]
         self.rotors = M600(rotor_config, dt=self.dt).to(self.device)
 
-        rotor_params = make_functional(self.rotors)
+        rotor_params = TensorDict.from_module(self.rotors)
         self.rotor_params = rotor_params.expand(self.shape).clone()
         self.TIME_CONSTANTS_0 = torch.tensor(self.params["rotor_configuration"]['time_constants'], device=self.device)
         self.FORCE_CONSTANTS_0 = torch.tensor(self.params["rotor_configuration"]['force_constants'], device=self.device)
@@ -144,7 +143,7 @@ class UnderwaterVehicleFin(RobotBase):
         self.arm_pos = torch.zeros(*self.shape,self.num_fins,device=self.device).squeeze(1)
         fin_config = self.params["fin_configuration"]
         self.fins = fin200(fin_config, dt=self.dt).to(self.device)
-        fin_params = make_functional(self.fins)
+        fin_params = TensorDict.from_module(self.fins)
         self.fin_params = fin_params.expand(self.shape).clone()
 
         self.tau_up = self.rotor_params["tau_up"]
