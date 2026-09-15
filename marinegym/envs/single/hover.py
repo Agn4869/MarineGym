@@ -37,6 +37,7 @@ class Hover(IsaacEnv):
         self.position_integral_enable = bool(integral_cfg.get("enable", False))
         self.position_integral_decay = float(integral_cfg.get("decay", 0.995))
         self.position_integral_limit = max(float(integral_cfg.get("limit", 1.0)), 1e-3)
+        self.include_previous_action = bool(cfg.task.get("include_previous_action", False))
         self.time_encoding = cfg.task.time_encoding
         self.mode = cfg.mode
         self.disturbances = cfg.task.get("disturbances", {})
@@ -182,6 +183,8 @@ class Hover(IsaacEnv):
         observation_dim = drone_state_dim + 3
         if self.position_integral_enable:
             observation_dim += 3
+        if self.include_previous_action:
+            observation_dim += self.drone.num_rotors
 
         if self.cfg.task.time_encoding:
             self.time_encoding_dim = 4
@@ -333,6 +336,11 @@ class Hover(IsaacEnv):
                 -self.position_integral_limit, self.position_integral_limit
             )
             obs.append(self.position_error_integral / self.position_integral_limit)
+        if self.include_previous_action:
+            # ``prev_actions`` stores the filtered command actually sent to the
+            # actuator on the preceding step, already in the normalized [-1, 1]
+            # action range.
+            obs.append(self.prev_actions)
         if self.time_encoding:
             t = (self.progress_buf / self.max_episode_length).unsqueeze(-1)
             obs.append(t.expand(-1, self.time_encoding_dim).unsqueeze(1))

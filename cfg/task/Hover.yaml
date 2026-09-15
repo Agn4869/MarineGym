@@ -51,4 +51,7 @@ position_error_integral:
   decay: 0.995
   limit: 1.0
 
+# Expose the previous filtered direct-control command to PPO.
+include_previous_action: true
+
 action_transform: null
