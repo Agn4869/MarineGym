@@ -21,7 +21,8 @@ import torch
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "scripts"))
-sys.path.insert(0, str(ROOT))
+if str(ROOT) not in sys.path:
+    sys.path.append(str(ROOT))
 
 from marinegym import init_simulation_app
 from smoke_test_task import load_task_config
@@ -78,4 +79,3 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
-
