@@ -19,6 +19,10 @@ class Hover(IsaacEnv):
         self.reward_action_smoothness_weight = cfg.task.reward_action_smoothness_weight
         self.reward_velocity_weight = cfg.task.get("reward_velocity_weight", 0.0)
         self.reward_distance_scale = cfg.task.reward_distance_scale
+        self.reward_position_weight = float(cfg.task.get("reward_position_weight", 0.8))
+        self.reward_heading_weight = float(cfg.task.get("reward_heading_weight", 0.2))
+        self.reward_near_target_weight = float(cfg.task.get("reward_near_target_weight", 0.0))
+        self.near_target_radius = float(cfg.task.get("near_target_radius", 0.2))
         self.action_smoothing = float(cfg.task.get("action_smoothing", 1.0))
         self.action_smoothing = max(0.0, min(1.0, self.action_smoothing))
         self.time_encoding = cfg.task.time_encoding
@@ -322,9 +326,20 @@ class Hover(IsaacEnv):
         pos_error = torch.norm(self.rpos, dim=-1)
         heading_alignment = torch.sum(self.drone.heading * self.target_heading, dim=-1)
 
-        distance = torch.norm(torch.cat([self.rpos, self.rheading], dim=-1), dim=-1)
-
-        reward_pose = 0.5 * 1.0 / (1.0 + torch.square(self.reward_distance_scale * distance))
+        heading_error = torch.norm(self.rheading, dim=-1)
+        # Keep position and heading objectives separate.  This prevents a
+        # nearly-correct attitude from masking a persistent position error.
+        position_reward = 1.0 / (
+            1.0 + torch.square(self.reward_distance_scale * pos_error)
+        )
+        heading_reward = 1.0 / (1.0 + torch.square(heading_error))
+        reward_pose = 0.5 * (
+            self.reward_position_weight * position_reward
+            + self.reward_heading_weight * heading_reward
+        )
+        reward_near_target = self.reward_near_target_weight * torch.exp(
+            -torch.square(pos_error / max(self.near_target_radius, 1e-3))
+        )
         # uprightness
         reward_up = torch.square((self.drone.up[..., 2] + 1) / 2)
 
@@ -345,8 +360,10 @@ class Hover(IsaacEnv):
             + reward_effort
             + reward_action_smoothness
             + reward_velocity
+            + reward_near_target
         )
 
+        distance = torch.norm(torch.cat([self.rpos, self.rheading], dim=-1), dim=-1)
         misbehave = (self.drone.pos[..., 2] < 0.2) | (distance > 4)
         hasnan = torch.isnan(self.drone_state).any(-1)
 

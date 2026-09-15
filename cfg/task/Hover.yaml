@@ -26,10 +26,14 @@ drone_model:
 force_sensor: false
 time_encoding: true
 
-reward_effort_weight: 0.1
+reward_effort_weight: 0.03
 reward_action_smoothness_weight: 0.02
 reward_velocity_weight: 0.1
 reward_distance_scale: 1.2
+reward_position_weight: 0.8
+reward_heading_weight: 0.2
+reward_near_target_weight: 0.15
+near_target_radius: 0.2
 
 # Fraction of the new PPO action applied at each simulation step.  Lower
 # values reduce visible thruster chatter while keeping direct actuation.
