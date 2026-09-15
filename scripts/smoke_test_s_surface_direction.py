@@ -1,6 +1,7 @@
 """Check the world-frame sign of the six direct BlueROV thruster inputs.
 
-Runs short one-environment probes for +/-x, +/-y and +/-z references and
+Runs short one-environment probes for each thruster's positive and negative
+command and
 prints the measured world-frame displacement and velocity.  This is a sanity
 check for frame/sign conventions, not a controller-tuning benchmark.
 """
@@ -32,9 +33,11 @@ def main() -> None:
         local_axis = quat_rotate_inverse(base_rotors, quat_axis(rotor_rot, axis=0))
         print(f"[THRUSTERS] positions={local_pos[0, 0].tolist()}", flush=True)
         print(f"[THRUSTERS] axes={local_axis[0, 0].tolist()}", flush=True)
-        probes = (("+x", 0, 1.0), ("-x", 0, -1.0),
-                  ("+y", 1, 1.0), ("-y", 1, -1.0),
-                  ("+z", 2, 1.0), ("-z", 2, -1.0))
+        probes = tuple(
+            (f"rotor_{idx}{sign}", idx, value)
+            for idx in range(6)
+            for sign, value in (("+", 1.0), ("-", -1.0))
+        )
         for label, axis, value in probes:
             td = env.reset()
             # Remove reset randomization from this sign test: hold the vehicle
@@ -51,14 +54,9 @@ def main() -> None:
             p0 = env.drone.get_state()[..., :3].detach().clone()
             action = torch.zeros((1, 6), device=env.device)
             action[:, axis] = value
-            if label == "+x":
-                print(f"[ACTION_TEST] shape={tuple(action.shape)} action={action.tolist()}", flush=True)
             for _ in range(40):
                 td.set(("agents", "action"), action)
                 td = env.step(td)
-            if label == "+x":
-                print(f"[ACTION_TEST] throttle={env.drone.throttle[0, 0].detach().cpu().tolist()}", flush=True)
-                print(f"[ACTION_TEST] thrusts={env.drone.thrusts[0, 0].detach().cpu().tolist()}", flush=True)
             state = env.drone.get_state()
             delta = (state[..., :3] - p0)[..., 0, :].squeeze(0)
             # get_state layout is position(3), quaternion(4), linear velocity(3).

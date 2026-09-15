@@ -201,21 +201,18 @@ class UnderwaterVehicle(RobotBase):
         self.forces += hydro_forces
         self.torques += hydro_torques
 
-        # Apply the equivalent actuator wrench to the articulation root.  The
-        # BlueROV rotor links are fixed-joint children; Isaac Sim 5.0 may
-        # update their throttle state while ignoring external forces sent to a
-        # child link.  Applying the same net wrench at the root preserves the
-        # rigid-body dynamics and avoids that version-dependent behavior.
-        self._view.apply_forces_and_torques_at_pos(
-            thruster_force_world.reshape(-1, 3),
-            thruster_torque_world.reshape(-1, 3),
-            is_global=True,
-        )
-
+        # Isaac's per-body force API treats repeated writes in one step as an
+        # update, not an accumulation.  Combine actuator and hydrodynamic
+        # terms into one world-frame wrench so the latter cannot overwrite
+        # the thruster force.
+        hydro_force_world = quat_rotate(self.rot, self.forces)
+        hydro_torque_world = quat_rotate(self.rot, self.torques)
+        total_force_world = thruster_force_world + hydro_force_world
+        total_torque_world = thruster_torque_world + hydro_torque_world
         self.base_link.apply_forces_and_torques_at_pos(
-            self.forces.reshape(-1, 3), 
-            self.torques.reshape(-1, 3),
-            is_global=False
+            total_force_world.reshape(-1, 3),
+            total_torque_world.reshape(-1, 3),
+            is_global=True,
         )
         self.throttle_difference[:] = torch.norm(self.throttle - last_throttle, dim=-1)
         return self.throttle.sum(-1)
