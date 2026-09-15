@@ -27,3 +27,4 @@ from .lee_position_controller import (
     AttitudeController,
     RateController
 )
+from .s_surface_controller import SSurfaceController

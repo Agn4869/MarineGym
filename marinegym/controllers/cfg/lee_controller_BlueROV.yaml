@@ -1,0 +1,7 @@
+# Lee / S-surface controller parameters for the six-thruster BlueROV asset.
+# These gains match the stable baseline used by BlueROVHeavy and are kept in
+# a separate file because the original BlueROV asset was direct-actuation only.
+position_gain: [6, 6, 6]
+velocity_gain: [4.7, 4.7, 4.7]
+attitude_gain: [3, 3, 0.15]
+angular_rate_gain: [0.52, 0.52, 0.18]

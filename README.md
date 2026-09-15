@@ -23,6 +23,7 @@ This work is based on the original [MarineGym](https://github.com/Marine-RL/Mari
 - [x] Run the Hover environment and 16-way parallel smoke test
 - [x] Restore PPO training and evaluation for Hover and Track
 - [x] Validate checkpoint saving and loading
+- [ ] Validate the optional S-surface Hover controller against the BlueROV thruster frame
 - [ ] Port remaining/unregistered environments (the repository contains no `landing.py`)
 
 The first compatibility milestone can be tested independently from the MarineGym environments:
@@ -110,6 +111,28 @@ underwater acoustic model), followed by a task and sensor smoke test—not as a
 simple Isaac Sim API rename.
 
 The training script is located in the `scripts` folder, named `train.py`.
+
+### S-surface Hover (experimental, opt-in)
+
+The default `Hover` configuration uses direct six-thruster actions so that the
+baseline PPO path stays simple and reproducible. An experimental
+sliding-surface control path is also included. When enabled, the policy
+outputs four normalized references `(v_x, v_y, v_z, yaw)`;
+the controller forms `s = (v - v_ref) + lambda * (p - p_ref)` and applies a
+smooth `tanh` reaching term before the existing rotor mixer. The path is
+engineering-complete enough for smoke tests and short PPO runs, but its
+world-frame sign convention has not yet been validated against the BlueROV
+USD thruster axes. Use the two diagnostic scripts before treating it as a
+research result:
+
+```bash
+python scripts/smoke_test_s_surface_controller.py
+python scripts/smoke_test_s_surface_direction.py
+```
+
+The first checks finite, sign-sensitive rotor commands. The second runs a
+controlled simulator probe and prints measured world-frame displacement; a
+real vehicle/asset geometry check is still required before tuning gains.
 
 
 To start the training process, run:

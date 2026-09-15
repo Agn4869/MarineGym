@@ -4,10 +4,10 @@ import torch.distributions as D
 from marinegym.envs.isaac_env import AgentSpec, IsaacEnv
 from marinegym.utils.isaacsim_compat import prim_utils
 from marinegym.views import ArticulationView, RigidPrimView
-from marinegym.utils.torch import euler_to_quaternion, quat_axis
+from marinegym.utils.torch import euler_to_quaternion, quat_axis, quat_rotate_inverse
 
 from tensordict.tensordict import TensorDict, TensorDictBase
-from torchrl.data import UnboundedContinuousTensorSpec, CompositeSpec, DiscreteTensorSpec
+from torchrl.data import BoundedTensorSpec, UnboundedContinuousTensorSpec, CompositeSpec, DiscreteTensorSpec
 
 from marinegym.robots.drone import UnderwaterVehicle
 
@@ -25,10 +25,53 @@ class Hover(IsaacEnv):
         self.enable_flow = self.disturbances[self.mode]['flow']['enable_flow']
         self.max_flow_velocity = self.disturbances[self.mode]['flow']['max_flow_velocity']
         self.flow_velocity_gaussian_noise = self.disturbances[self.mode]['flow']['flow_velocity_gaussian_noise']
+        # IsaacEnv.__init__() calls _set_specs(), so this must be available
+        # before entering the base-class initializer.
+        self.control_mode = cfg.task.get("control_mode", "direct")
 
         super().__init__(cfg, headless)
 
         self.drone.initialize()
+        if self.control_mode == "s_surface":
+            from marinegym.controllers import ControllerBase
+            controller_name = cfg.task.drone_model.controller
+            controller_cls = ControllerBase.REGISTRY[controller_name]
+            # The articulation backend may expose the diagonal inertia as
+            # either ``(3,)`` or a singleton-batched tensor.  Normalize it
+            # here before converting values for the controller configuration.
+            inertia = self.drone.INERTIA_0.detach().reshape(-1)
+            uav_params = {
+                "name": self.drone.name,
+                "mass": float(self.drone.MASS_0.detach().reshape(-1)[0].item()),
+                "inertia": {"xx": float(inertia[0]), "yy": float(inertia[1]), "zz": float(inertia[2])},
+                "rotor_configuration": self.drone.params["rotor_configuration"],
+            }
+            surface_cfg = cfg.task.get("s_surface", {})
+            self.controller = controller_cls(
+                9.81,
+                uav_params,
+                surface_lambda=float(surface_cfg.get("surface_lambda", 1.5)),
+                reaching_gain=float(surface_cfg.get("reaching_gain", 2.0)),
+                boundary_layer=float(surface_cfg.get("boundary_layer", 0.15)),
+            ).to(self.device)
+            # Read the actual BlueROV thruster poses from USD.  The first four
+            # thrusters are horizontal and the last two are vertical; using a
+            # synthetic quadrotor mixer here would silently flip/lose axes.
+            if hasattr(self.controller, "set_thruster_geometry"):
+                rotor_pos, rotor_rot = self.drone.rotors_view.get_world_poses()
+                base_pos, base_rot = self.drone.get_world_poses()
+                base_rotors = base_rot.unsqueeze(-2).expand_as(rotor_rot)
+                local_pos = quat_rotate_inverse(
+                    base_rotors, rotor_pos - base_pos.unsqueeze(-2)
+                )
+                local_axes = quat_rotate_inverse(
+                    base_rotors, quat_axis(rotor_rot, axis=0)
+                )
+                self.controller.set_thruster_geometry(
+                    local_pos[0, 0], local_axes[0, 0]
+                )
+        else:
+            self.controller = None
         if self.enable_payload:
             payload_cfg = self.disturbances[self.mode]['payload']
             self.payload_z_dist = D.Uniform(
@@ -117,9 +160,17 @@ class Hover(IsaacEnv):
                 "intrinsics": self.drone.intrinsics_spec.unsqueeze(0).to(self.device)
             })
         }).expand(self.num_envs).to(self.device)
+        action_leaf = (
+            # Keep the singleton agent axis consistent with the direct rotor
+            # action spec (``(num_envs, 1, action_dim)``), which PPO uses to
+            # infer ``n_agents`` and ``action_dim``.
+            BoundedTensorSpec(-1, 1, (1, 4), device=self.device)
+            if self.control_mode == "s_surface"
+            else self.drone.action_spec.unsqueeze(0)
+        )
         self.action_spec = CompositeSpec({
             "agents": CompositeSpec({
-                "action": self.drone.action_spec.unsqueeze(0),
+                "action": action_leaf,
             })
         }).expand(self.num_envs).to(self.device)
         self.reward_spec = CompositeSpec({
@@ -184,6 +235,25 @@ class Hover(IsaacEnv):
 
     def _pre_sim_step(self, tensordict: TensorDictBase):
         actions = tensordict[("agents", "action")]
+        if self.control_mode == "s_surface":
+            root_state = self.drone.get_state()[..., :13]
+            # Agent actions are commonly stored as ``(num_envs, 4)`` while
+            # the articulation state carries an extra singleton agent axis
+            # ``(num_envs, 1, 13)``.  Add that axis before broadcasting the
+            # references so multi-environment runs behave like the 1-env case.
+            while actions.ndim < root_state.ndim:
+                actions = actions.unsqueeze(-2)
+            while actions.ndim > root_state.ndim:
+                # PPO may retain one or more singleton agent axes while the
+                # articulation view is flattened to (num_envs, 13).
+                actions = actions.squeeze(-2)
+            target_vel, target_yaw = self.controller.process_rl_actions(actions)
+            actions = self.controller.compute(
+                root_state,
+                target_pos=self.target_pos,
+                target_vel=target_vel,
+                target_yaw=target_yaw,
+            )
         self.effort = torch.abs(self.drone.apply_action(actions))
 
     def _compute_state_and_obs(self):

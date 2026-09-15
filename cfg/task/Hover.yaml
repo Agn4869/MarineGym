@@ -14,7 +14,7 @@ env:
 
 drone_model:
   name: BlueROV
-  controller: LeePositionController
+  controller: null
 force_sensor: false
 time_encoding: true
 
