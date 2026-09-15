@@ -31,11 +31,12 @@ pid:
   # BlueROV's horizontal damping is relatively strong; these gains produce
   # enough force to correct a 0.2--0.5 m offset without relying on PPO.
   position_gain: [4.0, 4.0, 5.0]
-  integral_gain: [0.5, 0.5, 0.6]
-  velocity_gain: [3.0, 3.0, 4.0]
+  integral_gain: [0.2, 0.2, 0.3]
+  velocity_gain: [5.0, 5.0, 6.0]
   attitude_gain: [0.8, 0.8, 0.5]
   angular_rate_gain: [0.15, 0.15, 0.12]
   integral_limit: 1.0
+  integral_decay: 0.995
   water_density: 997.0
 force_sensor: false
 time_encoding: true

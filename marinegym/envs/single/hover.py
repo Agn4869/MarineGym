@@ -93,6 +93,7 @@ class Hover(IsaacEnv):
                     attitude_gain=pid_cfg.get("attitude_gain", (0.8, 0.8, 0.5)),
                     angular_rate_gain=pid_cfg.get("angular_rate_gain", (0.15, 0.15, 0.12)),
                     integral_limit=float(pid_cfg.get("integral_limit", 1.0)),
+                    integral_decay=float(pid_cfg.get("integral_decay", 0.995)),
                     water_density=float(pid_cfg.get("water_density", 997.0)),
                 ).to(self.device)
             else:

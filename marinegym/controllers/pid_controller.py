@@ -45,12 +45,14 @@ class PIDController(ControllerBase):
         attitude_gain: Sequence[float] = (0.8, 0.8, 0.5),
         angular_rate_gain: Sequence[float] = (0.15, 0.15, 0.12),
         integral_limit: float = 1.0,
+        integral_decay: float = 0.995,
         water_density: float = 997.0,
     ) -> None:
         super().__init__()
         self.dt = float(dt)
         self.num_rotors = int(uav_params["rotor_configuration"]["num_rotors"])
         self.integral_limit = float(integral_limit)
+        self.integral_decay = float(integral_decay)
 
         self.register_buffer("mass", torch.tensor(float(uav_params["mass"])))
         inertia = uav_params.get("inertia", {})
@@ -158,7 +160,7 @@ class PIDController(ControllerBase):
 
         pos_error = target_pos_f - pos
         vel_error = target_vel_f - linear_vel
-        self._position_integral.add_(pos_error * self.dt).clamp_(-self.integral_limit, self.integral_limit)
+        self._position_integral.mul_(self.integral_decay).add_(pos_error * self.dt).clamp_(-self.integral_limit, self.integral_limit)
         force_world = self.mass.to(dtype=dtype) * (
             self.kp_pos.to(dtype=dtype) * pos_error
             + self.ki_pos.to(dtype=dtype) * self._position_integral
@@ -189,4 +191,3 @@ class PIDController(ControllerBase):
         commands = thrust / self.max_force.to(device=device, dtype=dtype)
         commands = torch.clamp(commands, -1.0, 1.0)
         return commands.reshape(*batch_shape, self.num_rotors)
-
